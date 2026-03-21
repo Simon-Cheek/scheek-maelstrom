@@ -1,0 +1,23 @@
+# Binaries
+bin/
+
+# Go build cache
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Maelstrom test output
+store/
+
+# IDE
+.idea/
+*.iml
