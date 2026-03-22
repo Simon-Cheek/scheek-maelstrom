@@ -55,7 +55,7 @@ func (serv *server) handleRead(msg maelstrom.Message) error {
 
 func main() {
 	serv := server{node: maelstrom.NewNode()}
-	serv.kv = maelstrom.NewSeqKV(serv.node)
+	serv.kv = maelstrom.NewLinKV(serv.node)
 
 	serv.node.Handle("add", serv.handleAdd)
 	serv.node.Handle("read", serv.handleRead)
