@@ -4,17 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"sync"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
 type server struct {
-	node     *maelstrom.Node
-	mu       sync.Mutex
-	messages []int
-	topology map[string][]string
-	kv       *maelstrom.KV
+	node *maelstrom.Node
+	kv   *maelstrom.KV
 }
 
 func (serv *server) handleAdd(msg maelstrom.Message) error {
@@ -43,35 +39,26 @@ func (serv *server) handleRead(msg maelstrom.Message) error {
 	if err := json.Unmarshal(msg.Body, &body); err != nil {
 		return err
 	}
-	serv.mu.Lock()
-	defer serv.mu.Unlock()
-	body["messages"] = serv.messages
+	totalVal := 0
+	nodeIds := serv.node.NodeIDs()
+	for _, id := range nodeIds {
+		cur, err := serv.kv.ReadInt(context.Background(), id)
+		if err == nil {
+			totalVal += cur
+		}
+	}
+
 	body["type"] = "read_ok"
+	body["value"] = totalVal
 	return serv.node.Reply(msg, body)
 }
 
-func (serv *server) handleTopology(msg maelstrom.Message) error {
-	var body struct {
-		Topology map[string][]string `json:"topology"`
-	}
-	if err := json.Unmarshal(msg.Body, &body); err != nil {
-		return err
-	}
-	serv.mu.Lock()
-	defer serv.mu.Unlock()
-	serv.topology = body.Topology
-	response := map[string]any{}
-	response["type"] = "topology_ok"
-	return serv.node.Reply(msg, response)
-}
-
 func main() {
-	serv := server{node: maelstrom.NewNode(), messages: []int{}}
+	serv := server{node: maelstrom.NewNode()}
 	serv.kv = maelstrom.NewSeqKV(serv.node)
 
 	serv.node.Handle("add", serv.handleAdd)
 	serv.node.Handle("read", serv.handleRead)
-	serv.node.Handle("topology", serv.handleTopology)
 
 	if err := serv.node.Run(); err != nil {
 		log.Fatal(err)
