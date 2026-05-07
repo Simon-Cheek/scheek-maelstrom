@@ -10,7 +10,7 @@ import (
 
 type logEntry struct {
 	offset int
-	msg    int
+	msg    float64
 }
 
 type server struct {
@@ -18,14 +18,14 @@ type server struct {
 	//kv   *maelstrom.KV
 	logs       map[string][]logEntry
 	logCounter int
-	logMutex   sync.Mutex
+	logMutex   sync.RWMutex
 }
 
 func (serv *server) handlePoll(msg maelstrom.Message) error {
-	//var body map[string]any
-	//if err := json.Unmarshal(msg.Body, &body); err != nil {
-	//	return err
-	//}
+	var body map[string]any
+	if err := json.Unmarshal(msg.Body, &body); err != nil {
+		return err
+	}
 	//delta := int(body["delta"].(float64))
 	//cur, err := serv.kv.ReadInt(context.Background(), serv.node.ID())
 	//var val int
