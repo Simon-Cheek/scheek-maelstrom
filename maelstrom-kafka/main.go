@@ -16,9 +16,10 @@ type logEntry struct {
 type server struct {
 	node *maelstrom.Node
 	//kv   *maelstrom.KV
-	logs       map[string][]logEntry
-	logCounter int
-	logMutex   sync.RWMutex
+	logs             map[string][]logEntry
+	logCounter       int
+	logMutex         sync.RWMutex
+	committedOffsets map[string]int
 }
 
 func (serv *server) handlePoll(msg maelstrom.Message) error {
@@ -72,48 +73,50 @@ func (serv *server) handleSend(msg maelstrom.Message) error {
 }
 
 func (serv *server) handleCommitOffsets(msg maelstrom.Message) error {
-	//var body map[string]any
-	//if err := json.Unmarshal(msg.Body, &body); err != nil {
-	//	return err
-	//}
-	//totalVal := 0
-	//nodeIds := serv.node.NodeIDs()
-	//for _, id := range nodeIds {
-	//	cur, err := serv.kv.ReadInt(context.Background(), id)
-	//	if err == nil {
-	//		totalVal += cur
-	//	}
-	//}
-	//
-	//body["type"] = "read_ok"
-	//body["value"] = totalVal
-	//return serv.node.Reply(msg, body)
-	return nil
+	var body map[string]any
+	if err := json.Unmarshal(msg.Body, &body); err != nil {
+		return err
+	}
+	var offsets map[string]any
+	serv.logMutex.Lock()
+	defer serv.logMutex.Unlock()
+	offsets = body["offsets"].(map[string]any)
+	for key, offset := range offsets {
+		intOffset := int(offset.(float64))
+		prevOffset := serv.committedOffsets[key]
+		if intOffset > prevOffset {
+			serv.committedOffsets[key] = intOffset
+		}
+	}
+	resBody := map[string]any{}
+	resBody["type"] = "commit_offsets_ok"
+	return serv.node.Reply(msg, resBody)
 }
 
 func (serv *server) handleListCommittedOffsets(msg maelstrom.Message) error {
-	//var body map[string]any
-	//if err := json.Unmarshal(msg.Body, &body); err != nil {
-	//	return err
-	//}
-	//totalVal := 0
-	//nodeIds := serv.node.NodeIDs()
-	//for _, id := range nodeIds {
-	//	cur, err := serv.kv.ReadInt(context.Background(), id)
-	//	if err == nil {
-	//		totalVal += cur
-	//	}
-	//}
-	//
-	//body["type"] = "read_ok"
-	//body["value"] = totalVal
-	//return serv.node.Reply(msg, body)
-	return nil
+	var body map[string]any
+	if err := json.Unmarshal(msg.Body, &body); err != nil {
+		return err
+	}
+	keys := body["keys"].([]any)
+	offsets := map[string]int{}
+	serv.logMutex.RLock()
+	defer serv.logMutex.RUnlock()
+	for _, key := range keys {
+		offsets[key.(string)] = serv.committedOffsets[key.(string)]
+	}
+	resBody := map[string]any{}
+	resBody["type"] = "list_committed_offsets_ok"
+	resBody["offsets"] = offsets
+	return serv.node.Reply(msg, resBody)
 }
 
 func main() {
 	serv := server{node: maelstrom.NewNode()}
 	serv.logCounter = 0
+	serv.logMutex = sync.RWMutex{}
+	serv.logs = make(map[string][]logEntry)
+	serv.committedOffsets = map[string]int{}
 
 	serv.node.Handle("send", serv.handleSend)
 	serv.node.Handle("poll", serv.handlePoll)
