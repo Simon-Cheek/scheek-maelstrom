@@ -26,21 +26,29 @@ func (serv *server) handlePoll(msg maelstrom.Message) error {
 	if err := json.Unmarshal(msg.Body, &body); err != nil {
 		return err
 	}
-	//delta := int(body["delta"].(float64))
-	//cur, err := serv.kv.ReadInt(context.Background(), serv.node.ID())
-	//var val int
-	//if err != nil {
-	//	val = delta
-	//} else {
-	//	val = cur + delta
-	//}
-	//if err := serv.kv.Write(context.Background(), serv.node.ID(), val); err != nil {
-	//	return err
-	//}
-	//response := map[string]any{}
-	//response["type"] = "add_ok"
-	//return serv.node.Reply(msg, response)
-	return nil
+	offsets := body["offsets"].(map[string]any)
+	returnMsg := map[string][][]int{}
+	serv.logMutex.RLock()
+	defer serv.logMutex.RUnlock()
+	for key, offset := range offsets {
+		var logsToReturn []logEntry
+		logArrs := [][]int{}
+		var logEnts []logEntry = serv.logs[key]
+		for _, logEnt := range logEnts {
+			if logEnt.offset >= int(offset.(float64)) {
+				logsToReturn = append(logsToReturn, logEnt)
+			}
+		}
+		for _, logToReturn := range logsToReturn {
+			logArr := []int{logToReturn.offset, int(logToReturn.msg)}
+			logArrs = append(logArrs, logArr)
+		}
+		returnMsg[key] = logArrs
+	}
+	resp := map[string]any{}
+	resp["type"] = "poll_ok"
+	resp["msgs"] = returnMsg
+	return serv.node.Reply(msg, resp)
 }
 
 func (serv *server) handleSend(msg maelstrom.Message) error {
