@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
+	"strconv"
 	"sync"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
@@ -15,11 +17,15 @@ type logEntry struct {
 
 type server struct {
 	node *maelstrom.Node
-	//kv   *maelstrom.KV
-	logs             map[string][]logEntry
-	logCounter       int
-	logMutex         sync.RWMutex
-	committedOffsets map[string]int
+	kv   *maelstrom.KV
+}
+
+func generateNextOffsetKey(key string) string {
+	return "nextOffset/" + key
+}
+
+func generateLogEntryKey(key string, offset int) string {
+	return "log/" + key + "/" + strconv.Itoa(offset)
 }
 
 func (serv *server) handlePoll(msg maelstrom.Message) error {
@@ -29,23 +35,7 @@ func (serv *server) handlePoll(msg maelstrom.Message) error {
 	}
 	offsets := body["offsets"].(map[string]any)
 	returnMsg := map[string][][]int{}
-	serv.logMutex.RLock()
-	defer serv.logMutex.RUnlock()
-	for key, offset := range offsets {
-		var logsToReturn []logEntry
-		logArrs := [][]int{}
-		var logEnts []logEntry = serv.logs[key]
-		for _, logEnt := range logEnts {
-			if logEnt.offset >= int(offset.(float64)) {
-				logsToReturn = append(logsToReturn, logEnt)
-			}
-		}
-		for _, logToReturn := range logsToReturn {
-			logArr := []int{logToReturn.offset, int(logToReturn.msg)}
-			logArrs = append(logArrs, logArr)
-		}
-		returnMsg[key] = logArrs
-	}
+
 	resp := map[string]any{}
 	resp["type"] = "poll_ok"
 	resp["msgs"] = returnMsg
@@ -59,16 +49,36 @@ func (serv *server) handleSend(msg maelstrom.Message) error {
 	}
 	key := body["key"].(string)
 	receivedMsg := body["msg"].(float64)
-	serv.logMutex.Lock()
-	defer serv.logMutex.Unlock()
-	serv.logCounter++
-	count := serv.logCounter
-	serv.logs[key] = append(serv.logs[key], logEntry{count, receivedMsg})
+
+	nextOffsetKey := generateNextOffsetKey(key)
+	var cur int
+	var err error
+
+	// Retry until Offset claimed
+	for {
+		cur, err = serv.kv.ReadInt(context.Background(), nextOffsetKey)
+		if err != nil && maelstrom.ErrorCode(err) == maelstrom.KeyDoesNotExist {
+			cur = 0
+		} else if err != nil {
+			return err
+		}
+		err = serv.kv.CompareAndSwap(context.Background(), nextOffsetKey, cur, cur+1, true)
+		if err == nil {
+			break
+		} else if maelstrom.ErrorCode(err) != maelstrom.PreconditionFailed {
+			return err
+		}
+	}
+
+	// Write to log
+	writeErr := serv.kv.Write(context.Background(), generateLogEntryKey(key, cur), receivedMsg)
+	if writeErr != nil {
+		return writeErr
+	}
 
 	resBody := map[string]any{}
 	resBody["type"] = "send_ok"
-	resBody["offset"] = count
-
+	resBody["offset"] = cur
 	return serv.node.Reply(msg, resBody)
 }
 
@@ -113,6 +123,7 @@ func (serv *server) handleListCommittedOffsets(msg maelstrom.Message) error {
 
 func main() {
 	serv := server{node: maelstrom.NewNode()}
+	serv.kv = maelstrom.NewLinKV(serv.node)
 	serv.logCounter = 0
 	serv.logMutex = sync.RWMutex{}
 	serv.logs = make(map[string][]logEntry)
