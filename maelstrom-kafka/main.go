@@ -36,6 +36,26 @@ func (serv *server) handlePoll(msg maelstrom.Message) error {
 	offsets := body["offsets"].(map[string]any)
 	returnMsg := map[string][][]int{}
 
+	for key, offset := range offsets {
+		returnMsg[key] = [][]int{}
+		remainingMsgs := 5
+		curOffset := int(offset.(float64))
+		maxOffset, err := serv.kv.ReadInt(context.Background(), generateNextOffsetKey(key))
+		if err != nil {
+			return err
+		}
+		// Fetch up to 5 msgs starting at each offset
+		for remainingMsgs > 0 && curOffset <= maxOffset {
+			logEntryKey := generateLogEntryKey(key, curOffset)
+			logMsg, logEntryErr := serv.kv.ReadInt(context.Background(), logEntryKey)
+			if logEntryErr != nil {
+				return logEntryErr
+			}
+			returnMsg[key] = append(returnMsg[key], []int{curOffset, logMsg})
+			curOffset++
+			remainingMsgs--
+		}
+	}
 	resp := map[string]any{}
 	resp["type"] = "poll_ok"
 	resp["msgs"] = returnMsg
