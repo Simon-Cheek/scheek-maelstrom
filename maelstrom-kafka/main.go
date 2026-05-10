@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"strconv"
-	"sync"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
@@ -26,6 +25,10 @@ func generateNextOffsetKey(key string) string {
 
 func generateLogEntryKey(key string, offset int) string {
 	return "log/" + key + "/" + strconv.Itoa(offset)
+}
+
+func generateCommittedOffsetKey(key string) string {
+	return "committedOffset/" + key
 }
 
 func (serv *server) handlePoll(msg maelstrom.Message) error {
@@ -108,14 +111,26 @@ func (serv *server) handleCommitOffsets(msg maelstrom.Message) error {
 		return err
 	}
 	var offsets map[string]any
-	serv.logMutex.Lock()
-	defer serv.logMutex.Unlock()
 	offsets = body["offsets"].(map[string]any)
+
+	// Only update offset if value is greater than current
 	for key, offset := range offsets {
-		intOffset := int(offset.(float64))
-		prevOffset := serv.committedOffsets[key]
-		if intOffset > prevOffset {
-			serv.committedOffsets[key] = intOffset
+		// Continually grab and attempt to CAS until successful
+		for {
+			curOffset, err := serv.kv.ReadInt(context.Background(), generateCommittedOffsetKey(key))
+			if err != nil && maelstrom.ErrorCode(err) != maelstrom.KeyDoesNotExist {
+				return err
+			}
+			intOffset := int(offset.(float64))
+			if curOffset > intOffset {
+				break
+			}
+			casErr := serv.kv.CompareAndSwap(context.Background(), generateCommittedOffsetKey(key), curOffset, intOffset, true)
+			if casErr == nil {
+				break
+			} else if maelstrom.ErrorCode(casErr) != maelstrom.PreconditionFailed {
+				return casErr
+			}
 		}
 	}
 	resBody := map[string]any{}
@@ -144,10 +159,6 @@ func (serv *server) handleListCommittedOffsets(msg maelstrom.Message) error {
 func main() {
 	serv := server{node: maelstrom.NewNode()}
 	serv.kv = maelstrom.NewLinKV(serv.node)
-	serv.logCounter = 0
-	serv.logMutex = sync.RWMutex{}
-	serv.logs = make(map[string][]logEntry)
-	serv.committedOffsets = map[string]int{}
 
 	serv.node.Handle("send", serv.handleSend)
 	serv.node.Handle("poll", serv.handlePoll)
