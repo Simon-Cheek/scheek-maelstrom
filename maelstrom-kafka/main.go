@@ -145,10 +145,13 @@ func (serv *server) handleListCommittedOffsets(msg maelstrom.Message) error {
 	}
 	keys := body["keys"].([]any)
 	offsets := map[string]int{}
-	serv.logMutex.RLock()
-	defer serv.logMutex.RUnlock()
+
 	for _, key := range keys {
-		offsets[key.(string)] = serv.committedOffsets[key.(string)]
+		offsetForKey, err := serv.kv.ReadInt(context.Background(), generateNextOffsetKey(key.(string)))
+		if err != nil {
+			return err
+		}
+		offsets[key.(string)] = offsetForKey
 	}
 	resBody := map[string]any{}
 	resBody["type"] = "list_committed_offsets_ok"
