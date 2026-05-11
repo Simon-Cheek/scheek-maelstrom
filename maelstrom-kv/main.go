@@ -15,20 +15,21 @@ type server struct {
 	kv      map[int]int
 }
 
-func updateKv(txns [][]any, kv map[int]int) [][]any {
+func updateKv(txns []any, kv map[int]int) [][]any {
 	var results [][]any
 
 	for _, txn := range txns {
-		op := txn[0].(string)
-		key := int(txn[1].(float64))
+		txnArr := txn.([]any)
+		op := txnArr[0].(string)
+		key := int(txnArr[1].(float64))
 		if op == "r" {
 			// Return txn with read value
 			results = append(results, []any{op, key, kv[key]})
 		} else if op == "w" {
 			// Update KV and Return txn
-			val := int(txn[2].(float64))
+			val := int(txnArr[2].(float64))
 			kv[key] = val
-			results = append(results, txn)
+			results = append(results, txnArr)
 		}
 	}
 
@@ -41,8 +42,8 @@ func (serv *server) handleTxn(msg maelstrom.Message) error {
 		return err
 	}
 
-	msgId := body["msg_id"].(int)
-	txns := body["txn"].([][]any)
+	msgId := int(body["msg_id"].(float64))
+	txns := body["txn"].([]any)
 
 	serv.mu.Lock()
 	results := updateKv(txns, serv.kv)
