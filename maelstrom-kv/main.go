@@ -56,7 +56,7 @@ func (serv *server) handleTxn(msg maelstrom.Message) error {
 	resBody["type"] = "txn_ok"
 	resBody["in_reply_to"] = msgId
 
-	return serv.node.Reply(msg, "response")
+	return serv.node.Reply(msg, resBody)
 }
 
 func main() {
