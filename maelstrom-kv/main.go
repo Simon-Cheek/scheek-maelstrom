@@ -51,6 +51,21 @@ func (serv *server) handleTxn(msg maelstrom.Message) error {
 	serv.counter++
 	serv.mu.Unlock()
 
+	// Propagate to other nodes
+	nodes := serv.node.NodeIDs()
+	for _, node := range nodes {
+		if node != serv.node.ID() {
+			gossipMsg := map[string]any{}
+			gossipMsg["type"] = "gossip"
+			gossipMsg["msg_id"] = msgId
+			gossipMsg["txn"] = txns
+			sendErr := serv.node.Send(node, gossipMsg)
+			if sendErr != nil {
+				return sendErr
+			}
+		}
+	}
+
 	resBody := map[string]any{}
 	resBody["msg_id"] = newMsgId
 	resBody["txn"] = results
@@ -60,10 +75,25 @@ func (serv *server) handleTxn(msg maelstrom.Message) error {
 	return serv.node.Reply(msg, resBody)
 }
 
+func (serv *server) handleGossip(msg maelstrom.Message) error {
+	var body map[string]any
+	if err := json.Unmarshal(msg.Body, &body); err != nil {
+		return err
+	}
+	txns := body["txn"].([]any)
+
+	serv.mu.Lock()
+	updateKv(txns, serv.kv)
+	serv.mu.Unlock()
+
+	return serv.node.Reply(msg, "")
+}
+
 func main() {
 	serv := server{node: maelstrom.NewNode(), mu: sync.Mutex{}, counter: 0, kv: make(map[int]int)}
 
 	serv.node.Handle("txn", serv.handleTxn)
+	serv.node.Handle("gossip", serv.handleGossip)
 
 	if err := serv.node.Run(); err != nil {
 		log.Fatal(err)
